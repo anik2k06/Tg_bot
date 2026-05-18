@@ -4,6 +4,7 @@ from threading import Thread
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, ChatMemberHandler, ContextTypes
+import asyncio
 
 # Enable logging
 logging.basicConfig(
@@ -43,18 +44,43 @@ async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Error sending message: {e}")
 
+
 def main():
     TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     
     # Start the web server in a separate background thread
     Thread(target=run_flask).start()
     
-    # Initialize and run the Telegram Bot
+    # Initialize the Telegram Bot Application
     application = Application.builder().token(TOKEN).build()
     application.add_handler(ChatMemberHandler(greet_new_member, ChatMemberHandler.CHAT_MEMBER))
     
     logger.info("Starting Telegram polling...")
-    application.run_polling(allowed_updates=[Update.CHAT_MEMBER])
+    
+    # FIX: Explicitly handle the asyncio event loop lifecycle
+    try:
+        # Try to get the existing running loop (common in some IDE environments)
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        # If no loop exists, create a new one
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    # Use the application's built-in initialization sequences safely
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.start())
+    
+    # Start checking for Telegram updates
+    loop.create_task(application.updater.start_polling(allowed_updates=[Update.CHAT_MEMBER]))
+    
+    # Keep the main thread alive while the loop runs
+    try:
+        loop.run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Stopping bot...")
+    finally:
+        loop.run_until_complete(application.stop())
+        loop.run_until_complete(application.shutdown())
 
 if __name__ == "__main__":
     main()
