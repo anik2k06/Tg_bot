@@ -1,32 +1,38 @@
 import os
 import logging
+from threading import Thread
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, ChatMemberHandler, ContextTypes
 
-# Enable logging to track bot activity and errors
+# Enable logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# 1. Setup a minimal Flask app to satisfy Render's Web Service requirements
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_flask():
+    # Render automatically assigns a PORT environment variable
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# 2. Telegram Bot Logic
 async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Detects when a user joins the group and sends a stylized welcome message."""
     result = update.chat_member
-    
-    # Check if the status updated from 'left/none' to an active 'member'
     if result.old_chat_member.status in ["left", "kicked", "none"] and result.new_chat_member.status == "member":
         user = result.new_chat_member.user
-        user_mention = user.mention_markdown_v2() # Safely handles special characters in usernames
+        user_mention = user.mention_markdown_v2()
         group_name = update.effective_chat.title
         
-        # Escape special characters for Telegram's MarkdownV2 formatting
         escaped_group = group_name.replace("!", "\\!").replace("-", "\\-").replace(".", "\\.")
-        
-        welcome_text = (
-            f"👋 Welcome {user_mention} to *{escaped_group}*\\!\n\n"
-            f"Please read the pinned messages and follow the rules\\."
-        )
+        welcome_text = f"👋 Welcome {user_mention} to *{escaped_group}*\\!\n\nPlease follow the rules\\."
         
         try:
             await context.bot.send_message(
@@ -34,25 +40,20 @@ async def greet_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text=welcome_text,
                 parse_mode="MarkdownV2"
             )
-            logger.info(f"Greeted {user.first_name} in chat {group_name}")
         except Exception as e:
-            logger.error(f"Failed to send welcome message: {e}")
+            logger.error(f"Error sending message: {e}")
 
 def main():
-    # Looks for a cloud environment variable first, falls back to local testing string
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_LOCAL_TESTING_TOKEN_HERE")
+    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
     
-    if TOKEN == "YOUR_LOCAL_TESTING_TOKEN_HERE" or not TOKEN:
-        logger.warning("Running with default local token. Replace with your actual BotFather token.")
-
-    # Initialize the application
+    # Start the web server in a separate background thread
+    Thread(target=run_flask).start()
+    
+    # Initialize and run the Telegram Bot
     application = Application.builder().token(TOKEN).build()
-    
-    # Listen explicitly for chat member status changes
     application.add_handler(ChatMemberHandler(greet_new_member, ChatMemberHandler.CHAT_MEMBER))
     
-    # Start the bot via long polling
-    logger.info("Bot service initialized. Polling started...")
+    logger.info("Starting Telegram polling...")
     application.run_polling(allowed_updates=[Update.CHAT_MEMBER])
 
 if __name__ == "__main__":
